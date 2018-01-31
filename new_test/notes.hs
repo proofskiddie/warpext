@@ -1,14 +1,14 @@
-{-# LANGUAGE OverloadedStrings, BangPatterns, TemplateHaskell #-}
+--file--
+-- Buffer
+   -- copy
+   -- BufferIO
+   -- withForeignBuffer
+   -- mallocBS
 
-import Criterion.Main
+{- Dependency on ByteString.Internal in the form of PS (ByteString constructor) and memcpy (C lang function
+   supplied by ByteString.Internal -}
 
-import qualified Data.ByteString as BS
-import Data.ByteString.Internal (ByteString(..))
-import Network.HTTP.Types 
-
-import Network.Wai.Handler.Warp.Buffer
-
-
+copy :: Buffer -> ByteString -> IO Buffer
 copy !ptr (PS fp o l) = withForeignPtr fp $ \p -> do
     memcpy ptr (p `plusPtr` o) (fromIntegral l)
     return $! ptr `plusPtr` l
@@ -28,8 +28,6 @@ copyPure !ptr bs = BS.useAsCStringLen bs $ \(src, len) -> do
     return $! ptr `plusPtr` (BS.length bs)
 {-# INLINE copyPure #-}
 
-propCopy = quickCheck (\x y -> copy x y == copyPure x y)
-{-
 mallocBS :: Int -> IO ByteString
 mallocBS size = do
     ptr <- allocateBuffer size
@@ -73,6 +71,15 @@ withForeignBufferPure bs f = BS.useAsCStringLen bs $ \p -> f ((castPtr . fst) p,
 --file--
 -- PackInt
 
+-- $setup
+-- >>> import Data.ByteString.Char8 as B
+-- >>> import Test.QuickCheck (Large(..))
+
+-- |
+--
+-- prop> packIntegral (abs n) == B.pack (show (abs n))
+-- prop> \(Large n) -> let n' = fromIntegral (abs n :: Int) in packIntegral n' == B.pack (show n')
+
 packIntegral :: Integral a => a -> ByteString
 packIntegral 0 = "0"
 packIntegral n | n < 0 = error "packIntegral"
@@ -90,16 +97,18 @@ packIntegral n = unsafeCreate len go0
 {-# SPECIALIZE packIntegral :: Int -> ByteString #-}
 {-# SPECIALIZE packIntegral :: Integer -> ByteString #-}
 
-packIntegralPure :: Integral a => a -> ByteString
-packIntegralPure 0 = "0"
-packIntegralPure n | n < 0 = error "packIntegral"
-packIntegralPure n = loop n B.empty
-  where
-    loop 0 s = s
-    loop n s = loop (div n 10) (B.cons (48 + fromIntegral (rem n 10)) s)
+{- implementation runs faster than the unsafe version above, with apparently less memory usage -}
 
-{-# SPECIALIZE packIntegralPure :: Int -> ByteString #-}
-{-# SPECIALIZE packIntegralPure :: Integer -> ByteString #-}
+packIntegral :: Integral a => a -> ByteString
+packIntegral 0 = "0"
+packIntegral n | n < 0 = error "packIntegral"
+packIntegral n = Data.ByteString.unfoldr ana n
+  where
+    ana 0 = Nothing
+    ana n = Just (fromIntegral $ 48 + (rem n 10), div n 10)
+
+{-# SPECIALIZE packIntegral :: Int -> ByteString #-}
+{-# SPECIALIZE packIntegral :: Integer -> ByteString #-}
 
 -- |
 --
@@ -479,16 +488,3 @@ spellPure init0 siz0 recv recvBuf
                 siz' = siz - len
             loop bss' siz'
 
--}
-return []
-main = $quickCheckAll
-{-    defaultMain [
-        bgroup "" [
-             bench "" $ whnf 
-           , bench "" $ whnfIO -- for IO
-           ]
-      , bgroup "" [
-             bench "" $ whnf 
-           , bench "" $ whnfIO -- for IO
-           ]
-   ]     -}
